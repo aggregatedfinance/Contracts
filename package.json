@@ -1,0 +1,22 @@
+{
+  "name": "contracts",
+  "version": "1.0.0",
+  "description": "Aggregated Finance Contracts",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aggregatedfinance/Contracts.git"
+  },
+  "author": "Aggregated Finance",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/aggregatedfinance/Contracts/issues"
+  },
+  "homepage": "https://github.com/aggregatedfinance/Contracts#readme",
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.5.0"
+  }
+}
