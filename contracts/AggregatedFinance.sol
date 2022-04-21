@@ -121,6 +121,7 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
     event ExcludeFromMaxWallet(address account);
     event UpdateUniswapV2Router(address indexed newAddress, address indexed oldAddress);
     event SetAutomatedMarketMakerPair(address indexed pair, bool indexed value);
+    event SetRewardTracker(address indexed newAddress);
     event FeesUpdated();
     event SendChannel1(uint256 tokensSwapped, uint256 amount);
     event SendChannel2(uint256 tokensSwapped, uint256 amount);
@@ -205,6 +206,12 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
     function _setAutomatedMarketMakerPair(address pair, bool enabled) private {
         automatedMarketMakerPairs[pair] = enabled;
         emit SetAutomatedMarketMakerPair(pair, enabled);
+    }
+
+    function setRewardTracker(address payable newTracker) public onlyOwner {
+        require(newTracker != address(0), "newTracker cannot be zero address");
+        rewardTracker = IRewardTracker(newTracker);
+        emit SetRewardTracker(newTracker);
     }
 
     function claim() public {
