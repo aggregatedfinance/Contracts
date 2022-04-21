@@ -13,10 +13,9 @@ import "./IUniswapV2Factory.sol";
 
 /// @custom:security-contact team@aggregated.finance
 contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC20Permit, ERC20Votes {
-    address constant UNISWAPROUTER = address(0x10ED43C718714eb63d5aA57B78B54704E256024E);
-    // address constant DEAD = 0x000000000000000000000000000000000000dEaD;
-    // address constant ZERO = 0x0000000000000000000000000000000000000000;
+    address constant UNISWAPROUTER = address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
+    // non-immutable reward tracker so it can be upgraded if needed
     IRewardTracker public rewardTracker;
     IUniswapV2Router02 public immutable uniswapV2Router;
     address public immutable uniswapV2Pair;
@@ -40,57 +39,67 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
     bool public swapEnabled = false;
     bool public compoundingEnabled = true;
 
-    uint256 public swapTokensAtAmount = 500000000 * (1e9); // 500 million default threshold
+    uint256 public swapTokensAtAmount = 100000 * (1e9); // 100 thousand default threshold
     uint256 public lastSwapTime;
-    bool swapAllToken = true;
 
-    uint256 public maxTransactionAmount;
-    uint256 public maxWallet;
+    uint256 public maxTransactionAmount = 1000000000 * (1e9); // 1 billion to start with 
+    uint256 public maxWallet = 22000000000 * (1e9); // 22 billion to start with
     uint256 private launchedAt;
 
     // Fee channel definitions. Enable each individually, and define tax rates for each.
-    bool public buyFeeC1Enabled;
-    bool public buyFeeC2Enabled;
-    bool public buyFeeC3Enabled;
-    bool public buyFeeC4Enabled;
-    bool public buyFeeC5Enabled;
+    bool public buyFeeC1Enabled = true;
+    bool public buyFeeC2Enabled = false;
+    bool public buyFeeC3Enabled = true;
+    bool public buyFeeC4Enabled = true;
+    bool public buyFeeC5Enabled = true;
 
-    bool public sellFeeC1Enabled;
-    bool public sellFeeC2Enabled;
-    bool public sellFeeC3Enabled;
-    bool public sellFeeC4Enabled;
-    bool public sellFeeC5Enabled;
+    bool public sellFeeC1Enabled = true;
+    bool public sellFeeC2Enabled = true;
+    bool public sellFeeC3Enabled = true;
+    bool public sellFeeC4Enabled = true;
+    bool public sellFeeC5Enabled = true;
 
-    bool public c1LiquidityEnabled = true;
     bool public c2BurningEnabled = true;
     bool public c3RewardsEnabled = true;
 
-    address public liquidityWallet;
     uint256 public tokensForC1;
     uint256 public tokensForC2;
     uint256 public tokensForC3;
     uint256 public tokensForC4;
     uint256 public tokensForC5;
 
-    address public c1Wallet;
-    address public c2Wallet;
-    address public c3Wallet;
-    address public c4Wallet;
-    address public c5Wallet;
+    // treasury wallet, default to 0x3e822d55e79eA9F53C744BD9179d89dDec081556
+    address public c1Wallet = address(0x3e822d55e79eA9F53C744BD9179d89dDec081556);
 
-    uint256 public buyTotalFees;
-    uint256 public buyC1Fee;
-    uint256 public buyC2Fee;
-    uint256 public buyC3Fee;
-    uint256 public buyC4Fee;
-    uint256 public buyC5Fee;
+    // burning wallet, default to the staking rewards wallet, but when burning is enabled 
+    // it will just burn them. The wallet still needs to be defined to function:
+    // 0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f
+    address public c2Wallet = address(0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f);
+
+    // rewards wallet, default to the rewards contract itself, not a wallet. But
+    // if rewards are disabled then they'll fall back to the staking rewards wallet:
+    // 0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f
+    address public c3Wallet = address(0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f);
+
+    // staking rewards wallet, default to 0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f
+    address public c4Wallet = address(0x16cc620dBBACc751DAB85d7Fc1164C62858d9b9f);
+
+    // operations wallet, default to 0xf05E5AeFeCd9c370fbfFff94c6c4614E6c165b78
+    address public c5Wallet = address(0xf05E5AeFeCd9c370fbfFff94c6c4614E6c165b78);
+
+    uint256 public buyTotalFees = 1200; // 12% default
+    uint256 public buyC1Fee = 400; // 4% Treasury
+    uint256 public buyC2Fee = 0; // Nothing
+    uint256 public buyC3Fee = 300; // 3% Eth Rewards
+    uint256 public buyC4Fee = 300; // 3% Eth Staking Pool
+    uint256 public buyC5Fee = 200; // 2% Operations
  
-    uint256 public sellTotalFees;
-    uint256 public sellC1Fee;
-    uint256 public sellC2Fee;
-    uint256 public sellC3Fee;
-    uint256 public sellC4Fee;
-    uint256 public sellC5Fee;
+    uint256 public sellTotalFees = 1300; // 13% default
+    uint256 public sellC1Fee = 400; // 4% Treasury
+    uint256 public sellC2Fee = 100; // 1% Auto Burn
+    uint256 public sellC3Fee = 300; // 3% Eth Rewards
+    uint256 public sellC4Fee = 300; // 3% Eth Staking Pool
+    uint256 public sellC5Fee = 200; // 2% Operations
 
     event LogErrorString(string message);
     event SwapEnabled(bool enabled);
@@ -102,7 +111,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
     event ChangeSwapTokensAtAmount(uint256 amount);
     event LimitsReinstated();
     event LimitsRemoved();
-    event C1LiquidityModified(bool enabled);
     event C2BurningModified(bool enabled);
     event C3RewardsModified(bool enabled);
     event ChannelWalletsModified(address indexed newAddress, uint8 idx);
@@ -120,11 +128,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
     event SendChannel4(uint256 tokensSwapped, uint256 amount);
     event SendChannel5(uint256 tokensSwapped, uint256 amount);
     event TokensBurned(uint256 amountBurned);
-    event SwapAndAddLiquidity(
-        uint256 tokensSwapped,
-        uint256 nativeReceived,
-        uint256 tokensIntoLiquidity
-    );
 
     constructor()
         ERC20("Aggregated Finance", "AGFI")
@@ -299,11 +302,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         emit LimitsReinstated();
     }
 
-    function modifyC1Liquidity(bool enabled) external onlyOwner {
-        c1LiquidityEnabled = enabled;
-        emit C1LiquidityModified(enabled);
-    }
-
     function modifyC2Burning(bool enabled) external onlyOwner {
         c2BurningEnabled = enabled;
         emit C2BurningModified(enabled);
@@ -314,7 +312,9 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         emit C3RewardsModified(enabled);
     }
 
-    function modifyChannelWallet(address newAddress, uint8 idx) external onlyOwner {        
+    function modifyChannelWallet(address newAddress, uint8 idx) external onlyOwner {
+        require(newAddress != address(0), "modifyChannelWallet: newAddress can not be zero address.");
+
         if (idx == 1) {
             c1Wallet = newAddress;
         } else if (idx == 2) {
@@ -463,8 +463,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
                 }
             }
         }
-        
-        _beforeTokenTransfer(from, to, amount);
  
         // anti bot logic
         if (block.number <= (launchedAt + 1) && 
@@ -490,9 +488,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         ) {
             swapping = true;
 
-            if (!swapAllToken) {
-                contractTokenBalance = swapTokensAtAmount;
-            }
             _executeSwap(contractTokenBalance, address(this).balance);
 
             lastSwapTime = block.timestamp;
@@ -511,20 +506,16 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
             takeFee = true;
         }
 
-        if (_isExcludedFromFees[from] || _isExcludedFromFees[to]) {
+        if (_isExcludedFromFees[from] || _isExcludedFromFees[to] || swapping || isCompounding || !taxEnabled) {
             takeFee = false;
         }
 
-        if (swapping || isCompounding || !taxEnabled) {
-            takeFee = false;
-        }
- 
         // only take fees on buys/sells, do not take on wallet transfers
         if (takeFee) {
             uint256 fees;
             // on sell
             if (automatedMarketMakerPairs[to] && sellTotalFees > 0) {
-                fees = (amount * sellTotalFees) / 100;
+                fees = (amount * sellTotalFees) / 10000;
                 if (sellFeeC1Enabled) {
                     tokensForC1 += fees * sellC1Fee / sellTotalFees;
                 }
@@ -542,7 +533,7 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
                 }
             // on buy
             } else if (automatedMarketMakerPairs[from] && buyTotalFees > 0) {
-                fees = (amount * buyTotalFees) / 100;
+                fees = (amount * buyTotalFees) / 10000;
 
                 if (buyFeeC1Enabled) {
                     tokensForC1 += fees * buyC1Fee / buyTotalFees;
@@ -561,19 +552,16 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
                 }
             }
  
+            amount -= fees;
             if (fees > 0){    
                 super._transfer(from, address(this), fees);
             }
- 
-            amount -= fees;
         }
  
         super._transfer(from, to, amount);
 
         rewardTracker.setBalance(payable(from), balanceOf(from));
         rewardTracker.setBalance(payable(to), balanceOf(to));
-
-        _afterTokenTransfer(from, to, amount);
     }
 
     function _executeSwap(uint256 tokens, uint256 native) private {
@@ -582,19 +570,11 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         }
 
         uint256 swapTokensTotal;
-        // channel 1 (liquidity, then treasury)
-        // if c1 add liquidity enabled, swap for liquidity and send to c1 wallet
-        // otherwise just send to c1 wallet
+        // channel 1 (treasury)
+        // just send to the c1 address
         uint256 swapTokensC1;
-        uint256 addTokensC1;
         if (address(c1Wallet) != address(0)) {
-
-            if (c1LiquidityEnabled) {
-                swapTokensC1 = tokensForC1 / 2; // halve it as half has to go to liquidity
-                addTokensC1 = tokensForC1 - swapTokensC1;
-            } else {
-                swapTokensC1 = tokensForC1;
-            }
+            swapTokensC1 = tokensForC1;
             swapTokensTotal += swapTokensC1;
         }
 
@@ -620,8 +600,15 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         if (address(c3Wallet) != address(0)) {
             if (c3RewardsEnabled) {
                 // just send the tokens now
+                (bool success, ) = address(rewardTracker).call{
+                    value: tokensForC3
+                }("");
+                if (success) {
+                    emit SendChannel3(swapTokensC3, swapTokensC3);
+                } else {
+                    emit LogErrorString("Tracker failed to receive tokens");
+                }
                 super._transfer(address(this), c3Wallet, tokensForC3);
-                emit SendChannel3(swapTokensC3, swapTokensC3);
             } else {
                 swapTokensC3 = tokensForC3;
                 swapTokensTotal += swapTokensC3;
@@ -657,19 +644,13 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
         tokensForC5 = 0;
 
         // set the eth conversion amounts
+        uint256 nativeForC1 = (nativeSwapped * swapTokensC1) / swapTokensTotal;
         uint256 nativeForC2 = (nativeSwapped * swapTokensC2) / swapTokensTotal;
         uint256 nativeForC3 = (nativeSwapped * swapTokensC3) / swapTokensTotal;
         uint256 nativeForC4 = (nativeSwapped * swapTokensC4) / swapTokensTotal;
         uint256 nativeForC5 = (nativeSwapped * swapTokensC5) / swapTokensTotal;
-        uint256 nativeForC1;
 
-        if (c1LiquidityEnabled) {
-            nativeForC1 = nativeSwapped - nativeForC2 - nativeForC3 - nativeForC4 - nativeForC5;
-        } else {
-            nativeForC1 = (nativeSwapped * swapTokensC1) / swapTokensTotal;
-        }
-
-        if (nativeForC1 > 0 && !c1LiquidityEnabled) {
+        if (nativeForC1 > 0) {
             (bool success, ) = payable(c1Wallet).call{
                 value: nativeForC1
             }("");
@@ -719,14 +700,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
                 emit LogErrorString("Wallet failed to receive channel 5 tokens");
             }
         }
-        if (addTokensC1 > 0 && c1LiquidityEnabled) {
-            addLiquidity(addTokensC1, nativeForC1);
-            emit SwapAndAddLiquidity(
-                swapTokensC1,
-                nativeForC1,
-                addTokensC1
-            );
-        }
     }
 
     // swap the tokens back to ETH
@@ -740,18 +713,6 @@ contract AggregatedFinance is ERC20, ERC20Burnable, ERC20Snapshot, Ownable, ERC2
             0, // accept any amount of native
             path,
             address(this),
-            block.timestamp
-        );
-    }
-
-    function addLiquidity(uint256 tokens, uint256 native) private {
-        _approve(address(this), address(uniswapV2Router), tokens);
-        uniswapV2Router.addLiquidityETH{value: native}(
-            address(this),
-            tokens,
-            0, // slippage unavoidable
-            0, // slippage unavoidable
-            liquidityWallet,
             block.timestamp
         );
     }
