@@ -227,8 +227,9 @@ contract RewardTracker is IRewardTracker, Ownable {
                 success = true;
                 tokens = IERC20(tokenAddress).balanceOf(account) - initTokenBal;
             } catch Error(
-                string memory /*err*/
+                string memory reason /*err*/
             ) {
+                emit LogErrorString(reason);
                 success = false;
             }
 
