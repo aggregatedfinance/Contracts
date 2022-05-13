@@ -1,21 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
-import "@openzeppelin/contracts/governance/compatibility/GovernorCompatibilityBravo.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "./@openzeppelin/governance/Governor.sol";
+import "./@openzeppelin/governance/IGovernor.sol";
+import "./@openzeppelin/governance/extensions/GovernorSettings.sol";
+import "./@openzeppelin/governance/compatibility/GovernorCompatibilityBravo.sol";
+import "./@openzeppelin/governance/extensions/GovernorVotes.sol";
+import "./@openzeppelin/governance/extensions/GovernorVotesQuorumFraction.sol";
+import "./@openzeppelin/governance/extensions/GovernorTimelockControl.sol";
+import "./@openzeppelin/access/Ownable.sol";
 
-contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompatibilityBravo, GovernorVotes, GovernorVotesQuorumFraction, GovernorTimelockControl {
+contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompatibilityBravo, GovernorVotes, GovernorVotesQuorumFraction, GovernorTimelockControl, Ownable {
+    mapping (address => bool) private _proposalManagers;
+
+    event ProposalManagerModified(address proposalManager, bool enabled);
+    
     constructor(IVotes _token, TimelockController _timelock)
         Governor("Aggregated Finance Governor")
         GovernorSettings(1 /* 1 block */, 19636 /* 3 days */, 0)
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4)
         GovernorTimelockControl(_timelock)
-    {}
+    {
+        _proposalManagers[msg.sender] = true;
+    }
 
     // The following functions are overrides required by Solidity.
 
@@ -49,7 +57,7 @@ contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompat
     function getVotes(address account, uint256 blockNumber)
         public
         view
-        override(IGovernor, GovernorVotes)
+        override(Governor, IGovernor)
         returns (uint256)
     {
         return super.getVotes(account, blockNumber);
@@ -69,7 +77,27 @@ contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompat
         override(Governor, GovernorCompatibilityBravo, IGovernor)
         returns (uint256)
     {
+        require(isProposalManager(msg.sender), "Proposals must be opened by ProposalManagers.");
         return super.propose(targets, values, calldatas, description);
+    }
+
+    function isProposalManager(address member) public view returns (bool) {
+        return _proposalManagers[member];
+    }
+
+    function addProposalManager(address proposalManager) external onlyOwner {
+        require(proposalManager != address(0), "New ProposalManager cannot be zero address.");
+        require(_proposalManagers[proposalManager] == false, "Address already ProposalManager.");
+        _proposalManagers[proposalManager] = true;
+
+        emit ProposalManagerModified(proposalManager, true);
+    }
+
+    function removeProposalManager(address proposalManager) external onlyOwner {
+        require(_proposalManagers[proposalManager] == true, "Address not a ProposalManager.");
+        _proposalManagers[proposalManager] = false;
+
+        emit ProposalManagerModified(proposalManager, false);
     }
 
     function proposalThreshold()
