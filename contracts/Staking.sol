@@ -305,7 +305,7 @@ contract AGFIStaking is Ownable, ReentrancyGuard {
      * @param _token The address of the reward token
      * @dev Needs to be called before any deposit or withdrawal
      */
-    function updateReward(IERC20 _token) public onlyOwner {
+    function updateReward(IERC20 _token) public {
         require(isRewardToken[_token], "AGFIStaking: wrong reward token");
 
         uint256 _totalAGFI = internalAGFIBalance;
