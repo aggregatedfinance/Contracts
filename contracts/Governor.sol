@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
-import "@openzeppelin/contracts/governance/compatibility/GovernorCompatibilityBravo.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "./@openzeppelin/governance/Governor.sol";
+import "./@openzeppelin/governance/IGovernor.sol";
+import "./@openzeppelin/governance/extensions/GovernorSettings.sol";
+import "./@openzeppelin/governance/compatibility/GovernorCompatibilityBravo.sol";
+import "./@openzeppelin/governance/extensions/GovernorVotes.sol";
+import "./@openzeppelin/governance/extensions/GovernorVotesQuorumFraction.sol";
+import "./@openzeppelin/governance/extensions/GovernorTimelockControl.sol";
 
-contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompatibilityBravo, GovernorVotes, GovernorVotesQuorumFraction, GovernorTimelockControl {
+contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompatibilityBravo, GovernorVotes, GovernorVotesQuorumFraction, GovernorTimelockControl { 
     constructor(IVotes _token, TimelockController _timelock)
         Governor("Aggregated Finance Governor")
-        GovernorSettings(1 /* 1 block */, 19636 /* 3 days */, 0)
+        GovernorSettings(6545 /* 1 day */, 45818 /* 7 days */, 0)
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4)
         GovernorTimelockControl(_timelock)
@@ -49,7 +50,7 @@ contract AggregatedFinanceGovernor is Governor, GovernorSettings, GovernorCompat
     function getVotes(address account, uint256 blockNumber)
         public
         view
-        override(IGovernor, GovernorVotes)
+        override(Governor, IGovernor)
         returns (uint256)
     {
         return super.getVotes(account, blockNumber);
