@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.6;
 
-import '../@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import '../@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import '../@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
+import "../@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "../@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "../@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "./ISignataRight.sol";
 
 /// @title Linear Vesting Contract for Launches
 /// @notice safeTransferStakeInternal uses a fixed gas limit for native transfers which should be evaluated when deploying to new networks.
 contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
-    uint256 constant public INITIAL_RELEASE_PERCENTAGE = 2500;
-    uint256 constant public PERCENTAGE_FACTOR = 10000;
+    uint256 public constant INITIAL_RELEASE_PERCENTAGE = 2500;
+    uint256 public constant PERCENTAGE_FACTOR = 10000;
 
     // Info of each user.
     struct UserInfo {
@@ -48,7 +49,14 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     mapping(address => UserInfo) public userInfo;
     // participators
     address[] public addressList;
-    
+    // rights contract instance
+    ISignataRight public signataRight;
+    // enforcing schema
+    uint256 public schemaId;
+    // requires schema for deposits
+    bool public requireSchemaForDeposits;
+    // requires agfi holders
+    bool public onlyAgfiHolders;
 
     event Deposit(address indexed user, uint256 amount);
     event Harvest(
@@ -56,26 +64,35 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
         uint256 offeringAmount,
         uint256 excessAmount
     );
-    event UpdateOfferingAmount(uint256 previousOfferingAmount, uint256 newOfferingAmount);
-    event UpdateRaisingAmount(uint256 previousRaisingAmount, uint256 newRaisingAmount);
+    event UpdateOfferingAmount(
+        uint256 previousOfferingAmount,
+        uint256 newOfferingAmount
+    );
+    event UpdateRaisingAmount(
+        uint256 previousRaisingAmount,
+        uint256 newRaisingAmount
+    );
     event AdminFinalWithdraw(uint256 stakeTokenAmount, uint256 offerAmount);
-    event EmergencySweepWithdraw(address indexed receiver, address indexed token, uint256 balance);
-
+    event EmergencySweepWithdraw(
+        address indexed receiver,
+        address indexed token,
+        uint256 balance
+    );
 
     function initialize(
-      IERC20 _stakeToken,
-      IERC20 _offeringToken,
-      uint256 _startBlock,
-      uint256 _endBlockOffset,
-      uint256 _vestingBlockOffset, // Block offset between vesting distributions
-      uint256 _offeringAmount,
-      uint256 _raisingAmount,
-      address _adminAddress
+        IERC20 _stakeToken,
+        IERC20 _offeringToken,
+        uint256 _startBlock,
+        uint256 _endBlockOffset,
+        uint256 _vestingBlockOffset, // Block offset between vesting distributions
+        uint256 _offeringAmount,
+        uint256 _raisingAmount,
+        address _adminAddress
     ) external initializer {
         // Setup token variables
         stakeToken = _stakeToken;
         /// @dev address(0) turns this contract into a native token staking pool
-        if(address(stakeToken) == address(0)) {
+        if (address(stakeToken) == address(0)) {
             isNativeTokenStaking = true;
         }
         offeringToken = _offeringToken;
@@ -83,7 +100,10 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
         startBlock = _startBlock;
         endBlock = _startBlock + _endBlockOffset;
         // userTokenStatus requires that _vestingBlockOffset be greater than endBlock;
-        require(_vestingBlockOffset > 0, 'vestingBlockOffset must be greater than 0');
+        require(
+            _vestingBlockOffset > 0,
+            "vestingBlockOffset must be greater than 0"
+        );
         vestingEndBlock = endBlock + _vestingBlockOffset;
         // Setup amount variables
         offeringAmount = _offeringAmount;
@@ -91,7 +111,21 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
         totalAmount = 0;
         // Setup admin variable
         adminAddress = _adminAddress;
+        // Setup rights contract
+
         __ReentrancyGuard_init();
+    }
+
+    function configureSignataIntegration(
+        ISignataRight _signataRight,
+        uint256 _schemaId,
+        bool _requireSchemaForDeposits,
+        bool _onlyAgfiHolders
+    ) public onlyAdmin {
+        schemaId = _schemaId;
+        signataRight = _signataRight;
+        requireSchemaForDeposits = _requireSchemaForDeposits;
+        onlyAgfiHolders = _onlyAgfiHolders;
     }
 
     modifier onlyAdmin() {
@@ -108,13 +142,19 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     }
 
     function setOfferingAmount(uint256 _offerAmount) external onlyAdmin {
-        require(block.number < startBlock, "cannot update during active launch");
+        require(
+            block.number < startBlock,
+            "cannot update during active launch"
+        );
         emit UpdateOfferingAmount(offeringAmount, _offerAmount);
         offeringAmount = _offerAmount;
     }
 
     function setRaisingAmount(uint256 _raisingAmount) external onlyAdmin {
-        require(block.number < startBlock, "cannot update during active launch");
+        require(
+            block.number < startBlock,
+            "cannot update during active launch"
+        );
         emit UpdateRaisingAmount(raisingAmount, _raisingAmount);
         raisingAmount = _raisingAmount;
     }
@@ -122,23 +162,22 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     /// @notice Deposits native EVM tokens into the Launch contract as per the value sent
     ///   in the transaction.
     function depositNative() external payable onlyActiveLaunch nonReentrant {
-        require(isNativeTokenStaking, 'stake token is not native EVM token');
-        require(msg.value > 0, 'value not > 0');
+        require(isNativeTokenStaking, "stake token is not native EVM token");
+        require(msg.value > 0, "value not > 0");
         depositInternal(msg.value);
     }
 
     /// @dev Deposit ERC20 tokens with support for reflect tokens
     function deposit(uint256 _amount) external onlyActiveLaunch nonReentrant {
-        require(!isNativeTokenStaking, "stake token is native token, deposit through 'depositNative'");
+        require(
+            !isNativeTokenStaking,
+            "stake token is native token, deposit through 'depositNative'"
+        );
         require(_amount > 0, "_amount not > 0");
         uint256 pre = getTotalStakeTokenBalance();
-        stakeToken.safeTransferFrom(
-            msg.sender,
-            address(this),
-            _amount
-        );
+        stakeToken.safeTransferFrom(msg.sender, address(this), _amount);
         uint256 finalDepositAmount = getTotalStakeTokenBalance() - pre;
-        require(finalDepositAmount > 0, 'final deposit amount is zero');
+        require(finalDepositAmount > 0, "final deposit amount is zero");
         depositInternal(finalDepositAmount);
     }
 
@@ -146,6 +185,12 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     ///  any tokens in, but only updates the state. Make sure to transfer in the funds
     ///  in a parent function
     function depositInternal(uint256 _amount) internal {
+        if (requireSchemaForDeposits) {
+            require(
+                signataRight.holdsTokenOfSchema(msg.sender, schemaId),
+                "caller does not hold schema NFT"
+            );
+        }
         if (userInfo[msg.sender].amount == 0) {
             addressList.push(msg.sender);
         }
@@ -160,31 +205,44 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
         require(block.number > endBlock, "not harvest time");
         UserInfo storage currentUserInfo = userInfo[msg.sender];
         require(currentUserInfo.amount > 0, "have you participated?");
-        require(currentUserInfo.lastBlockHarvested < vestingEndBlock, "nothing left to harvest");
-        require(currentUserInfo.lastBlockHarvested < block.number, "cannot harvest in the same block");
-        
+        require(
+            currentUserInfo.lastBlockHarvested < vestingEndBlock,
+            "nothing left to harvest"
+        );
+        require(
+            currentUserInfo.lastBlockHarvested < block.number,
+            "cannot harvest in the same block"
+        );
+
         (
-            uint256 stakeTokenHarvest, 
-            uint256 offeringTokenTotalHarvest,,,
+            uint256 stakeTokenHarvest,
+            uint256 offeringTokenTotalHarvest,
+            ,
+            ,
+
         ) = userTokenStatus(msg.sender);
 
         currentUserInfo.lastBlockHarvested = block.number;
         // Flag initial harvest
-        if(!currentUserInfo.hasHarvestedInitial) {
-            totalDebt -= userInfo[msg.sender].amount; 
+        if (!currentUserInfo.hasHarvestedInitial) {
+            totalDebt -= userInfo[msg.sender].amount;
             currentUserInfo.hasHarvestedInitial = true;
         }
         // Settle refund
-        if(!currentUserInfo.refunded) {
+        if (!currentUserInfo.refunded) {
             currentUserInfo.refunded = true;
             if (stakeTokenHarvest > 0) {
                 safeTransferStakeInternal(msg.sender, stakeTokenHarvest);
             }
         }
         // Final check to verify the user has not gotten more tokens that originally allocated
-        uint256 offeringAllocationLeft = getOfferingAmount(msg.sender) - currentUserInfo.offeringTokensClaimed;
-        uint256 allocatedTokens = offeringAllocationLeft >= offeringTokenTotalHarvest ? offeringTokenTotalHarvest : offeringAllocationLeft;
-        if(allocatedTokens > 0) {
+        uint256 offeringAllocationLeft = getOfferingAmount(msg.sender) -
+            currentUserInfo.offeringTokensClaimed;
+        uint256 allocatedTokens = offeringAllocationLeft >=
+            offeringTokenTotalHarvest
+            ? offeringTokenTotalHarvest
+            : offeringAllocationLeft;
+        if (allocatedTokens > 0) {
             currentUserInfo.offeringTokensClaimed += allocatedTokens;
             // Transfer harvestable tokens
             offeringToken.safeTransfer(msg.sender, allocatedTokens);
@@ -199,19 +257,19 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     /// @notice This function has been deprecated, but leaving in the contract for backwards compatibility.
     function getUserAllocation(address _user) external view returns (uint256) {
         // avoid division by zero
-        if(totalAmount == 0) {
+        if (totalAmount == 0) {
             return 0;
         }
 
-        // allocation: 
+        // allocation:
         // 1e12 = 100%
         // 1e10 = 1%
         // 1e8 = 0.01%
-        return (userInfo[_user].amount * 1e12 / totalAmount);
+        return ((userInfo[_user].amount * 1e12) / totalAmount);
     }
 
     function getTotalStakeTokenBalance() public view returns (uint256) {
-        if(isNativeTokenStaking) {
+        if (isNativeTokenStaking) {
             return address(this).balance;
         } else {
             // Return ERC20 balance
@@ -232,18 +290,22 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     }
 
     // get the amount of Launch token you will get per harvest period
-    function getOfferingAmountAllocations(address _user) 
-        public 
-        view 
+    function getOfferingAmountAllocations(address _user)
+        public
+        view
         returns (
-            uint256 offeringInitialHarvestAmount, 
+            uint256 offeringInitialHarvestAmount,
             uint256 offeringTokenVestedAmount
-        ) 
+        )
     {
         uint256 userTotalOfferingAmount = getOfferingAmount(_user);
 
-        offeringInitialHarvestAmount = userTotalOfferingAmount * INITIAL_RELEASE_PERCENTAGE / PERCENTAGE_FACTOR;
-        offeringTokenVestedAmount = userTotalOfferingAmount - offeringInitialHarvestAmount;
+        offeringInitialHarvestAmount =
+            (userTotalOfferingAmount * INITIAL_RELEASE_PERCENTAGE) /
+            PERCENTAGE_FACTOR;
+        offeringTokenVestedAmount =
+            userTotalOfferingAmount -
+            offeringInitialHarvestAmount;
     }
 
     /// @notice Calculate a user's refunding amount to be received by multiplying the raising amount by
@@ -259,59 +321,72 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
         return userAmount - payAmount;
     }
 
-    /// @notice Get the amount of tokens a user is eligible to receive based on current state. 
-    /// @param _user address of user to obtain token status 
+    /// @notice Get the amount of tokens a user is eligible to receive based on current state.
+    /// @param _user address of user to obtain token status
     /// @return stakeTokenHarvest Amount of tokens available for harvest
     /// @return offeringTokenTotalHarvest Total amount of offering tokens that can be harvested (initial + vested)
     /// @return offeringTokenInitialHarvest Amount of initial harvest offering tokens that can be collected
     /// @return offeringTokenVestedHarvest Amount offering tokens that can be harvested from the vesting portion of tokens
     /// @return offeringTokensVesting Amount of offering tokens that are still vested
-    function userTokenStatus(address _user) 
-        public 
-        view 
+    function userTokenStatus(address _user)
+        public
+        view
         returns (
-            uint256 stakeTokenHarvest, 
-            uint256 offeringTokenTotalHarvest, 
+            uint256 stakeTokenHarvest,
+            uint256 offeringTokenTotalHarvest,
             uint256 offeringTokenInitialHarvest,
-            uint256 offeringTokenVestedHarvest, 
+            uint256 offeringTokenVestedHarvest,
             uint256 offeringTokensVesting
-        ) 
+        )
     {
         uint256 currentBlock = block.number;
-        if(currentBlock < endBlock) {
-            return (0,0,0,0,0); 
+        if (currentBlock < endBlock) {
+            return (0, 0, 0, 0, 0);
         }
         UserInfo memory currentUserInfo = userInfo[_user];
         // Setup refund amount
         stakeTokenHarvest = 0;
-        if(!currentUserInfo.refunded) {
+        if (!currentUserInfo.refunded) {
             stakeTokenHarvest = getRefundingAmount(_user);
         }
 
-        (uint256 offeringInitialHarvestAmount , uint256 offeringTokenVestedAmount) = getOfferingAmountAllocations(_user);
+        (
+            uint256 offeringInitialHarvestAmount,
+            uint256 offeringTokenVestedAmount
+        ) = getOfferingAmountAllocations(_user);
         // Setup initial harvest amount
         offeringTokenInitialHarvest = 0;
-        if(!currentUserInfo.hasHarvestedInitial) {
+        if (!currentUserInfo.hasHarvestedInitial) {
             offeringTokenInitialHarvest = offeringInitialHarvestAmount;
         }
         // Setup harvestable vested token amount
         uint256 totalVestingBlocks = vestingEndBlock - endBlock;
         // Use the lower value of block.number or vestingEndBlock
-        uint256 unlockEndBlock = block.number < vestingEndBlock ? block.number : vestingEndBlock;
+        uint256 unlockEndBlock = block.number < vestingEndBlock
+            ? block.number
+            : vestingEndBlock;
         // endBlock is the earliest harvest block
-        uint256 lastHarvestBlock = currentUserInfo.lastBlockHarvested < endBlock ? endBlock : currentUserInfo.lastBlockHarvested;
+        uint256 lastHarvestBlock = currentUserInfo.lastBlockHarvested < endBlock
+            ? endBlock
+            : currentUserInfo.lastBlockHarvested;
         offeringTokenVestedHarvest = 0;
-        if(unlockEndBlock > lastHarvestBlock ) {
+        if (unlockEndBlock > lastHarvestBlock) {
             uint256 unlockBlocks = unlockEndBlock - lastHarvestBlock;
-            offeringTokenVestedHarvest = (offeringTokenVestedAmount * unlockBlocks) / totalVestingBlocks;
+            offeringTokenVestedHarvest =
+                (offeringTokenVestedAmount * unlockBlocks) /
+                totalVestingBlocks;
         }
-        
-        offeringTokenTotalHarvest = offeringTokenInitialHarvest + offeringTokenVestedHarvest;
+
+        offeringTokenTotalHarvest =
+            offeringTokenInitialHarvest +
+            offeringTokenVestedHarvest;
 
         offeringTokensVesting = 0;
-        if(block.number < vestingEndBlock) {
+        if (block.number < vestingEndBlock) {
             uint256 vestingBlocksLeft = vestingEndBlock - block.number;
-            offeringTokensVesting = offeringTokenVestedAmount * vestingBlocksLeft / totalVestingBlocks;
+            offeringTokensVesting =
+                (offeringTokenVestedAmount * vestingBlocksLeft) /
+                totalVestingBlocks;
         }
     }
 
@@ -333,8 +408,8 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     }
 
     /// @notice Internal function to handle stake token transfers. Depending on the stake
-    ///   token type, this can transfer ERC-20 tokens or native EVM tokens. 
-    /// @param _to address to send stake token to 
+    ///   token type, this can transfer ERC-20 tokens or native EVM tokens.
+    /// @param _to address to send stake token to
     /// @param _amount value of reward token to transfer
     function safeTransferStakeInternal(address _to, uint256 _amount) internal {
         require(
@@ -355,8 +430,14 @@ contract LaunchLinearVesting is ReentrancyGuardUpgradeable {
     /// @notice Sweep accidental ERC20 transfers to this contract. Can only be called by admin.
     /// @param _token The address of the ERC20 token to sweep
     function sweepToken(IERC20 _token) external onlyAdmin {
-        require(address(_token) != address(stakeToken), "can not sweep stake token");
-        require(address(_token) != address(offeringToken), "can not sweep offering token");
+        require(
+            address(_token) != address(stakeToken),
+            "can not sweep stake token"
+        );
+        require(
+            address(_token) != address(offeringToken),
+            "can not sweep offering token"
+        );
         uint256 balance = _token.balanceOf(address(this));
         _token.safeTransfer(msg.sender, balance);
         emit EmergencySweepWithdraw(msg.sender, address(_token), balance);
