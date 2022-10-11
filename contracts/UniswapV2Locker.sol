@@ -112,8 +112,8 @@ contract UniswapV2Locker is Ownable, ReentrancyGuard {
             _amount
         );
 
-        (bool success, ) = payable(feeAddress).call{value: nativeFee}("");
-        require(success, "lockTokens::Native fee transfer failed");
+        require(msg.value == nativeFee, "lockTokens::Fee not paid");
+        feeAddress.transfer(nativeFee);
 
         Lock memory lock;
         lock.lockDate = block.timestamp;
