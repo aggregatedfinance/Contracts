@@ -3,12 +3,12 @@ pragma solidity ^0.8.0;
 
 import "./@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "./@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "./@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./@openzeppelin/contracts/access/Ownable.sol";
 import "./@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/ISignataRight.sol";
 import "./interfaces/IUniswapV2Pair.sol";
 import "./interfaces/IUniswapV2Factory.sol";
+import "./utils/TransferHelper.sol";
 
 contract UniswapV2Locker is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
@@ -105,8 +105,8 @@ contract UniswapV2Locker is Ownable, ReentrancyGuard {
             );
         }
 
-        SafeERC20.safeTransferFrom(
-            IERC20(_lpToken),
+        TransferHelper.safeTransferFrom(
+            _lpToken,
             address(msg.sender),
             address(this),
             _amount
@@ -217,7 +217,7 @@ contract UniswapV2Locker is Ownable, ReentrancyGuard {
             }
         }
 
-        SafeERC20.safeTransfer(IERC20(_lpToken), msg.sender, _amount);
+        TransferHelper.safeTransfer(_lpToken, msg.sender, _amount);
         emit Withdrawn(_lpToken, _amount);
     }
 
@@ -246,8 +246,8 @@ contract UniswapV2Locker is Ownable, ReentrancyGuard {
             );
         }
 
-        SafeERC20.safeTransferFrom(
-            IERC20(_lpToken),
+        TransferHelper.safeTransferFrom(
+            _lpToken,
             address(msg.sender),
             address(this),
             _amount
